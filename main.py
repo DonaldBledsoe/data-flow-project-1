@@ -18,12 +18,12 @@ class Order_Segment(beam.DoFn):
     def process(self, element):
         item_list = []
 
-        for key, value in element.items():  # nested for loop to iterate thru the order_items dict
-            if key == "order_items":
+        for key, value in element.items():                        # nested for loop to iterate thru the order_items dict
+            if key == "order_items":                                # another opportunity to simplify
                 for sub_elememnts in value:
-                    if isinstance(sub_elememnts, dict):
+                    if isinstance(sub_elememnts, dict):             # can I get by w/out this since I know it's a dict?
                         for key1, value1 in sub_elememnts.items():
-                            if key1 == "id":  # selecting the id key value
+                            if key1 == "id":                        # selecting the id value
                                 item_list.append(value1)
 
         element["items_list"] = item_list
@@ -41,16 +41,16 @@ class bq_filter(beam.DoFn):                             # selecting the fields n
         yield new_group
 
 
-def usd(element1):                                      # 3 functions to separate by currency
-    return element1["order_currency"] == "USD"
+def usd(element):                                                  # 3 functions to separate by currency
+    return element["order_currency"] == "USD"
 
 
-def gbp(element2):
-    return element2["order_currency"] == "GBP"
+def gbp(element):
+    return element["order_currency"] == "GBP"
 
 
-def eur(element3):
-    return element3["order_currency"] == "EUR"
+def eur(element):
+    return element["order_currency"] == "EUR"
 
 
 # This class is to calculate the total cost of item price, tax and shipping
@@ -58,36 +58,29 @@ def eur(element3):
 
 class TotalCost(beam.DoFn):
     def process(self, element):
-        total_price = 0.0                            # local variable to sum costs
+        total_price = 0.0  # local variable to sum costs
 
-        for key, value in element.items():          # nested for loop to iterate thru the order_items dict
-            if key == "order_items":
-                for sub_elememnts in value:
-                    for key1, value1 in sub_elememnts.items():
-                        if key1 == "price":                     # selecting the price key value
-                            total_price += value1
+        total_price += element["cost_tax"]
+        total_price += element["cost_shipping"]
 
-            # this portion adds in the tax and shipping costs which are standard values within the dictionary
-            if key == "cost_shipping":
-                total_price += value
-
-            if key == "cost_tax":
-                total_price += value
+        for item in element["order_items"]:  # for loop to iterate thru the order_items dict
+            total_price += item["price"]
 
         element["cost_total"] = round(total_price, 2)
-        yield element
+
         # print(element)
+        yield element
 
 
 class NameSplit(beam.DoFn):
     new_dict = {}
 
     def process(self, element):
-        print(element)
+        # print(element)
         # print(type(element))
 
         full_name = element["customer_name"].split(" ")
-        customer_first_name = full_name[0]                      #splitting the first and last names
+        customer_first_name = full_name[0]                                  # splitting the first and last names
         customer_last_name = full_name[1]
 
         order_building_number = element["order_address"].split(" ")[0]      # getting the bldg number
@@ -127,7 +120,7 @@ class Reformat(beam.DoFn):
         yield element_3
 
 
-topic_id = "projects/york-cdf-start/topics/dataflow-order-stock-update"     # topic for WriteToPubSub
+topic_id = "projects/york-cdf-start/topics/dataflow-order-stock-update"         # topic for WriteToPubSub
 
 if __name__ == '__main__':
 
@@ -187,20 +180,20 @@ if __name__ == '__main__':
 
         eur_split = total_cost | beam.Filter(eur)          # Eur orders
 
-        # Reducing down to just the necessary fields
-        USD_Orders = usd_split | "Filter for US" >> beam.ParDo(bq_filter())     # Writes to BigQuery
+        # Reducing down to just the necessary fields for writes to BigQuery
+        USD_Orders = usd_split | "Filter for US" >> beam.ParDo(bq_filter())
 
         GBP_Orders = gbp_split | "Filter for GB" >> beam.ParDo(bq_filter())
 
         EUR_Orders = eur_split | "Filter for EU" >> beam.ParDo(bq_filter())
 
-        # Getting the data needed for PubSub together
+        # Getting the order_id and order_items data needed for PubSub together
         filtered_items = total_cost | beam.ParDo(Item_Filter())
 
-        # making the items_list ...list for PubSub
+        # making the items_list for PubSub
         items_list = filtered_items | beam.ParDo(Order_Segment())
 
-        # something to be simplified later
+        # changing from PColl back to JSON obj (something to be simplified later?)
         itemsList_orderID = items_list | beam.Map(lambda s: json.dumps(s).encode("utf-8"))
 
         itemsList_orderID | "Write to Pub/Sub" >> beam.io.WriteToPubSub(topic=topic_id)
